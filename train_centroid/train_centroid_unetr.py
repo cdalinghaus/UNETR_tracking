@@ -17,12 +17,12 @@ parser.set_defaults(norm_pix_loss=False)
 args = parser.parse_args()
 
 ds = CentroidVectorData("dfki/train")
-testds = CentroidVectorData("dfki/train")
+testds = CentroidVectorData("dfki/test")
 
 train_dataloader = DataLoader(ds, batch_size=8, shuffle=True)
-test_dataloader = DataLoader(testds, batch_size=2, shuffle=False)
+test_dataloader = DataLoader(testds, batch_size=8, shuffle=False)
 
-unetr_model = UNETR(img_size=448, backbone="mae", encoder="vit_l", encoder_checkpoint=None, out_channels=2)
+unetr_model = UNETR(img_size=448, backbone="mae", encoder="vit_l", encoder_checkpoint=None, final_activation="Sigmoid")
 unetr_model.to("cuda")
 
 optimizer = Adam(unetr_model.parameters(), lr=1e-5)
@@ -43,10 +43,12 @@ for epoch in range(num_epochs):
         #print("VECTOR SHAPE", vec.shape)
         y_pred = unetr_model(x)
 
+        #y_pred = y_pred[:, :1, :, :]
+        #print(y_pred.shape, seg.shape)
         if args.use_loss_penalty:
-            loss = loss_fn(y_pred * penalty_map, vec)
+            loss = loss_fn(y_pred * penalty_map, seg)
         else:
-            loss = loss_fn(y_pred, vec)
+            loss = loss_fn(y_pred, seg)
 
         #print(loss.item())
         train_loss += loss.item()
@@ -71,9 +73,9 @@ for epoch in range(num_epochs):
             
             y_pred_val = unetr_model(x_val)
             if args.use_loss_penalty:
-                loss_val = loss_fn(y_pred_val * penalty_map_val, vec_val)
+                loss_val = loss_fn(y_pred_val * penalty_map_val, seg_val)
             else:
-                loss_val = loss_fn(y_pred_val, vec_val)
+                loss_val = loss_fn(y_pred_val, seg_val)
 
             val_loss += loss_val.item()
 
@@ -81,21 +83,21 @@ for epoch in range(num_epochs):
     print(f"Epoch [{epoch+1}/{num_epochs}], Validation Loss: {avg_val_loss}")
 
     # Save a validation sample with the current loss values as title
-    val_sample, _, showvec, _ = next(iter(test_dataloader))
+    val_sample, _m, _, _ = next(iter(test_dataloader))
     val_sample = val_sample.to("cuda")
     output = unetr_model(val_sample)
-    outputa = output[0, 0].detach().cpu()
-    outputb = output[0, 1].detach().cpu()
+    output = output[0].detach().cpu()
 
-    #print("plot shapes", val_sample[0].T.to("cpu").shape, outputa.squeeze().T.shape, _m[0].T.shape)
-    fig, ax = plt.subplots(1,5)
+    #print("plot shapes", val_sample[0].T.to("cpu").shape, output.squeeze().T.shape, _m[0].T.shape)
+    fig, ax = plt.subplots(1,3)
     ax.flat[0].imshow(val_sample[0].T.to("cpu"))
-    ax.flat[1].set_title(f"Epoch {epoch+1} Train Loss: {avg_train_loss:.4f}, Validation Loss: {avg_val_loss:.4f}")
-
-    ax.flat[1].imshow(outputa.squeeze().T)
-    ax.flat[2].imshow(outputb.squeeze().T)
-    ax.flat[3].imshow(showvec[0, 0].T)
-    ax.flat[4].imshow(showvec[0, 1].T)
-    plt.savefig(f"VECTOR_validation_sample_epoch_{epoch+1}.png")
+    ax.flat[0].set_title("x")
+    plt.suptitle(f"Epoch {epoch+1} Train Loss: {avg_train_loss:.4f}, Validation Loss: {avg_val_loss:.4f}")
+    ax.flat[1].imshow(output.squeeze().T)
+    ax.flat[1].set_title("y_pred")
+    ax.flat[2].imshow(_m[0].T)
+    ax.flat[2].set_title("y_target")
+    plt.savefig(f"SIGMOID_CENTROID_validation_sample_epoch_{epoch+1}.png")
+    torch.save(unetr_model, "centroid.pth")
     plt.clf()
     plt.close()
